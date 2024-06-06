@@ -126,6 +126,14 @@ auth required pam_tally2.so deny=5 unlock_time=900
 
 ### Disable Unnecessary Services
 
+check hardening system services
+
+```
+for service in $(systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1}'); do
+    systemd-analyze security $service;
+done
+```
+
 check all running services
 
 ```
@@ -162,6 +170,12 @@ PermitEmptyPasswords no
 ```
 
 ## Network
+
+### check DNS
+
+```
+cat /etc/resolv.conf
+```
 
 ### Add IP name and FQDN to /etc/hosts
 
@@ -276,6 +290,12 @@ echo "Authorized users only. All activity may be monitored and reported." | sudo
 
 ## File Permission and integrity
 
+### Check Symlinked Mount Points
+
+```
+ls -l /home
+```
+
 ### Set Appropriate File Permissions:
 
 ```
@@ -289,10 +309,6 @@ sudo chown root:root /etc/ssh/sshd_config
 sudo rpm-ostree install aide
 sudo aide --init
 sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
-```
-
-```
-sudo crontab -e
 ```
 
 ```
@@ -343,4 +359,10 @@ sudo sysctl -p
 sudo rpm-ostree install rkhunter
 sudo rkhunter --update
 sudo rkhunter --checkall
+```
+
+## Run Audit Security using Lynis
+
+```
+ cd lynis && ./lynis audit system
 ```
