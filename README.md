@@ -5,6 +5,7 @@
 ```markdown
 toolbox create f35-base
 toolbox enter f35-base
+toolbox list
 ```
 
 ## Securing Accounts and Authentication
@@ -93,8 +94,14 @@ sudo nano /etc/login.defs
 ```
 
 ```
-SHA_CRYPT_MIN_ROUNDS 5000
-SHA_CRYPT_MAX_ROUNDS 5000
+ENCRYPT_METHOD SHA512
+```
+
+add it in `/etc/pam.d/system-auth` and `/etc/pam.d/password-auth`
+
+```
+password required pam_pwquality.so retry=3
+password sufficient pam_unix.so sha512 shadow nullok try_first_pass use_authtok
 ```
 
 ### Configure Minimum and Maximum Password Age
@@ -104,6 +111,8 @@ SHA_CRYPT_MAX_ROUNDS 5000
 ```
 PASS_MIN_DAYS 7
 PASS_MAX_DAYS 90
+PASS MIN_LEN 12
+PASS_WARN_AGE   14
 ```
 
 ```
@@ -120,6 +129,16 @@ add it
 
 ```
 auth required pam_tally2.so deny=5 unlock_time=900
+```
+
+### Iddle session
+
+edit bash configuration on `/etc/profile` and `/etc/bashrc` `/etc/csh.cshrc`
+
+```
+TMOUT=600
+readonly TMOUT
+export TMOUT
 ```
 
 ## Services
@@ -153,7 +172,7 @@ sudo systemctl stop avahi-daemon.service
 sudo systemctl disable avahi-daemon.service
 ```
 
-### Secure Necessary Services
+### Secure Necessary Services (SSH)
 
 misal ssh
 
@@ -167,6 +186,45 @@ add this line
 PermitRootLogin no
 PasswordAuthentication no
 PermitEmptyPasswords no
+AllowUsers alief
+```
+
+restart
+
+```
+sudo systemctl restart sshd
+```
+
+### Limit Capabilities:
+
+```
+sudo systemctl edit NetworkManager.service
+```
+
+tambahkan line ini
+
+```
+[Service]
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+```
+
+### Restrict File System Access:
+
+```
+sudo systemctl edit NetworkManager.service
+```
+
+```
+[Service]
+ProtectSystem=full
+ProtectHome=yes
+```
+
+### Reload and Restart the Service:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart NetworkManager.service
 ```
 
 ## Network
@@ -208,6 +266,8 @@ blacklist tipc
 sudo systemctl enable firewalld
 sudo systemctl start firewalld
 sudo firewall-cmd --add-service=ssh --permanent
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
 sudo firewall-cmd --reload
 ```
 
@@ -227,12 +287,6 @@ net.ipv6.conf.lo.disable_ipv6 = 1
 sudo sysctl -p
 ```
 
-### Enable Process Accounting
-
-```
-
-```
-
 ### Enable systat
 
 ```
@@ -245,6 +299,32 @@ sudo systemctl enable --now sysstat
 ```
 sudo rpm-ostree install audit
 sudo systemctl enable --now auditd
+```
+
+```
+sudo nano /etc/audit/auditd.conf
+```
+
+ADD IT
+
+```
+max_log_file = 50
+max_log_file_action = KEEP_LOGS
+space_left_action = SYSLOG
+admin_space_left_action = SYSLOG
+```
+
+RESTART
+
+```
+sudo systemctl restart auditd
+```
+
+OR
+
+```
+sudo systemctl disable  auditd
+sudo systemctl enable --now  auditd
 ```
 
 ## Logging & Auditing
@@ -273,6 +353,14 @@ sudo nano /etc/logrotate.conf
     minsize 1M
     rotate 1
 }
+
+/var/log/messages {
+    rotate 4
+    weekly
+    postrotate
+        /usr/bin/systemctl reload rsyslog > /dev/null 2>/dev/null || true
+    endscript
+}
 ```
 
 ### Check deleted file in Use
@@ -289,6 +377,26 @@ echo "Authorized users only. All activity may be monitored and reported." | sudo
 ```
 
 ## File Permission and integrity
+
+### Edit /etc/fstab
+
+```
+sudo nano /etc/fstab
+```
+
+add it
+
+```
+tmpfs   /tmp    tmpfs   defaults,noexec,nosuid,nodev    0 0
+/dev/sda1  /var   ext4    defaults,noexec,nosuid,nodev    0 0
+```
+
+### Remount file system
+
+```
+sudo mount -o remount /tmp
+sudo mount -o remount /var
+```
 
 ### Check Symlinked Mount Points
 
@@ -308,11 +416,25 @@ sudo chown root:root /etc/ssh/sshd_config
 ```
 sudo rpm-ostree install aide
 sudo aide --init
-sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+sudo mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
 ```
 
 ```
 sudo crontab -e
+```
+
+### disable unwanted file system
+
+add file `/etc/modprobe.d/blacklist-filesystems.conf` and add this line
+
+```
+install cramfs /bin/true
+install freevxfs /bin/true
+install jffs2 /bin/true
+install hfs /bin/true
+install hfsplus /bin/true
+install squashfs /bin/true
+install udf /bin/true
 ```
 
 ### Kernel Hardening
@@ -326,10 +448,21 @@ sudo nano /etc/sysctl.conf
 ```
 
 ```
+# Disable IP forwarding
 net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+
+# Disable packet redirect sending
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
-kernel.randomize_va_space = 2
+
+# Enable TCP SYN cookies
+net.ipv4.tcp_syncookies = 1
+
+# Disable source packet routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+
 ```
 
 ## USB and Storage Drivers
@@ -349,6 +482,13 @@ blacklist firewire_ohci
 sudo nano /etc/sysctl.conf
 ```
 
+add this line
+
+```
+fs.suid_dumpable = 0
+kernel.core_pattern = |/bin/false
+```
+
 ```
 sudo sysctl -p
 ```
@@ -359,6 +499,41 @@ sudo sysctl -p
 sudo rpm-ostree install rkhunter
 sudo rkhunter --update
 sudo rkhunter --checkall
+```
+
+### SELINUX
+
+make sure selinux in enforcing
+
+```
+sudo setenforce 1
+sudo nano /etc/selinux/config
+```
+
+## Check For Unattended Upgrades
+
+```
+sudo rpm-ostree install dnf-automatic
+```
+
+edit `/etc/dnf/automatic.conf`
+
+```
+[commands]
+upgrade_type = default
+random_sleep = 360
+
+[emitters]
+system_name = yes
+emit_via = motd
+
+[base]
+debuglevel = 1
+mdpolicy = group:main
+
+[download]
+check_only = yes
+download_updates = yes
 ```
 
 ## Run Audit Security using Lynis
